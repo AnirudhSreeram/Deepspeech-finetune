@@ -2,9 +2,9 @@
 stage=1
 
 
-source /home/asreeram/miniconda3/etc/profile.d/conda.sh
+#source /home/asreeram/miniconda3/etc/profile.d/conda.sh
 
-conda activate deeppy
+#conda activate deeppy
 
 if [ $stage -le 1 ]; then
 
