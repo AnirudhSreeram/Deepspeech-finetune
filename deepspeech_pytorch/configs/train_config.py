@@ -26,12 +26,16 @@ class SpectConfig:
 class AugmentationConfig:
     speed_volume_perturb: bool = False  # Use random tempo and gain perturbations.
     spec_augment: bool = False  # Use simple spectral augmentation on mel spectograms.
-    noise_dir: str = '/home/asreeram/Workspace/deepspeech.pytorch/noise'  # Directory to inject noise into audio. If default, noise Inject not added
+    noise_dir: str ='/data/asreeram/deepspeech.pytorch/noise_dir/WGN' #'/data/asreeram/deepspeech.pytorch/noise_dir' # '/home/asreeram/Workspace/deepspeech.pytorch/noise'  # Directory to inject noise into audio. If default, noise Inject not added
     noise_prob: float = 0.4  # Probability of noise being added per sample
     noise_min: float = 0.0  # Minimum noise level to sample from. (1.0 means all noise, not original signal)
     noise_max: float = 0.5  # Maximum noise levels to sample from. Maximum 1.0
     noise_levels: noise_levels = (noise_min,noise_max)
-
+    perceptual_noise: bool = False
+    fft_len: int = 512
+    win_length: int = 256 
+    hop_length: int = 128
+    sample_rate: int =16000
 
 @dataclass
 class DataConfig:
@@ -58,7 +62,7 @@ class UniDirectionalConfig(BiDirectionalConfig):
 
 @dataclass
 class OptimConfig:
-    learning_rate: float = 1.5e-4  # Initial Learning Rate
+    learning_rate: float = 1.5e-5  # Initial Learning Rate
     learning_anneal: float = 0.99  # Annealing applied to learning rate after each epoch
     weight_decay: float = 1e-5  # Initial Weight Decay
 

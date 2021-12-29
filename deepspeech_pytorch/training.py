@@ -8,6 +8,7 @@ from deepspeech_pytorch.model import DeepSpeech
 from hydra.utils import to_absolute_path
 from omegaconf import OmegaConf
 from pytorch_lightning import seed_everything
+import torch
 
 
 def train(cfg: DeepSpeechConfig):
@@ -30,14 +31,14 @@ def train(cfg: DeepSpeechConfig):
             print("resume check point === ", resume_from_checkpoint)
             if resume_from_checkpoint:
                 cfg.trainer.resume_from_checkpoint = resume_from_checkpoint
-
+    #print("**********HERE**************")
     data_loader = DeepSpeechDataModule(
         labels=labels,
         data_cfg=cfg.data,
         normalize=True,
         is_distributed=cfg.trainer.gpus > 1
     )
-
+#    print("**********HERE**************", cfg.trainer
     model = DeepSpeech(
         labels=labels,
         model_cfg=cfg.model,
@@ -45,7 +46,7 @@ def train(cfg: DeepSpeechConfig):
         precision=cfg.trainer.precision,
         spect_cfg=cfg.data.spect
     )
-
+#    print("**********HERE**************", cfg.trainer)
     trainer = hydra.utils.instantiate(
         config=cfg.trainer,
         replace_sampler_ddp=False,

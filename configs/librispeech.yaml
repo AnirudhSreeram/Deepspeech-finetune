@@ -14,7 +14,7 @@ trainer:
   plugins: ddp_sharded
   checkpoint_callback: True
 checkpoint:
-  dirpath: /home/asreeram/Workspace/deepspeech.pytorch/check_point
+  dirpath: /data/asreeram/deepspeech.pytorch/check_point/
   save_top_k: 1
   monitor: "wer"
   verbose: True

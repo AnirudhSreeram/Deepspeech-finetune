@@ -4,21 +4,46 @@ import os
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 
+
+
+from tqdm import tqdm
+import torch
+import torchaudio
+
 import librosa
 import numpy as np
 import sox
 import torch
 from torch.utils.data import Dataset, Sampler, DistributedSampler, DataLoader
 import torchaudio
-
 from deepspeech_pytorch.configs.train_config import SpectConfig, AugmentationConfig
 from deepspeech_pytorch.loader.spec_augment import spec_augment
+from freq_masking import fft, masked_noise
+from multiprocessing import Process, Pool
 
 torchaudio.set_audio_backend("sox_io")
-
+from torch.multiprocessing import Pool, Process, set_start_method
+try:
+     set_start_method('spawn')
+except RuntimeError:
+    pass
 
 def load_audio(path):
-    sound, sample_rate = torchaudio.load(path)
+    melgan = False
+    if melgan:
+        #from melganneurips.mel2wav import MelVocoder
+        load_path="/data/asreeram/deepspeech.pytorch/melganneurips/models/multi_speaker.pt"
+        mel_gan = MelVocoder(load_path,github=True,device='cpu')
+        upsample = torchaudio.transforms.Resample(16000,22050)
+        downsample = torchaudio.transforms.Resample(22050,16000)
+        sound, sample_rate = torchaudio.load(path)
+        sound = upsample(sound)
+        sound = mel_gan(sound)
+        sound = mel_gan.inverse(sound)
+        sound = downsample(sound)
+        torch.cuda.empty_cache()
+    else:
+        sound, sample_rate = torchaudio.load(path)
     if sound.shape[0] == 1:
         sound = sound.squeeze()
     else:
@@ -46,34 +71,52 @@ class NoiseInjection(object):
     def __init__(self,
                  path=None,
                  sample_rate=16000,
-                 noise_levels=(0, 0.5)):
+                 noise_levels=(0, 0.5),
+                 augmentation_conf: AugmentationConfig = None):#anirudh
         """
         Adds noise to an input signal with specific SNR. Higher the noise level, the more noise added.
         Modified code from https://github.com/willfrey/audio/blob/master/torchaudio/transforms.py
         """
-        if not os.path.exists(path):
-            print("Directory doesn't exist: {}".format(path))
-            raise IOError
+        #if not os.path.exists(path):
+        #    print("Directory doesn't exist: {}".format(path))
+        #    raise IOError
         self.paths = path is not None and librosa.util.find_files(path)
         self.sample_rate = sample_rate
         self.noise_levels = noise_levels
+#        self.perceptual_noise = augmentation_conf.perceptual_noise #anirudh
+        self.aug_conf = augmentation_conf
 
     def inject_noise(self, data):
-        noise_path = np.random.choice(self.paths)
+        if not self.aug_conf.perceptual_noise:   #to do the imperceptable noise augmentation
+            noise_path = np.random.choice(self.paths)
+        else:
+            noise_path = ''
         noise_level = np.random.uniform(*self.noise_levels)
-        return self.inject_noise_sample(data, noise_path, noise_level)
+        #perceptual_noise = self.perceptual_noise #anirudh
+        return self.inject_noise_sample(data, noise_path, noise_level, self.aug_conf) #anirudh
 
-    def inject_noise_sample(self, data, noise_path, noise_level):
-        noise_len = sox.file_info.duration(noise_path)
-        data_len = len(data) / self.sample_rate
-        noise_start = np.random.rand() * (noise_len - data_len)
-        noise_end = noise_start + data_len
-        noise_dst = audio_with_sox(noise_path, self.sample_rate, noise_start, noise_end)
-        assert len(data) == len(noise_dst)
-        noise_energy = np.sqrt(noise_dst.dot(noise_dst) / noise_dst.size)
-        data_energy = np.sqrt(data.dot(data) / data.size)
-        data += noise_level * noise_dst * data_energy / noise_energy
-        return data
+    def inject_noise_sample(self, data, noise_path, noise_level, augmentation_conf):#anirudh
+#        print("Perceptual Flag is === ", augmentation_conf.perceptual_noise) 
+        if not augmentation_conf.perceptual_noise: #to do the imperceptable noise augmentation
+            #print("************HERE************")
+            noise_len = sox.file_info.duration(noise_path)
+            data_len = len(data) / self.sample_rate
+            noise_start = np.random.rand() * (noise_len - data_len)
+            noise_end = noise_start + data_len
+            noise_dst = audio_with_sox(noise_path, self.sample_rate, noise_start, noise_end)
+            assert len(data) == len(noise_dst)
+            noise_energy = np.sqrt(noise_dst.dot(noise_dst) / noise_dst.size)
+            data_energy = np.sqrt(data.dot(data) / data.size)
+            data += noise_level * noise_dst * data_energy / noise_energy
+            return data
+        else:
+            noise_dst = masked_noise(data, augmentation_conf.fft_len,
+            augmentation_conf.sample_rate, augmentation_conf.win_length, augmentation_conf.hop_length)
+            assert len(data) == len(noise_dst)
+            noise_energy = np.sqrt(noise_dst.dot(noise_dst) / noise_dst.size)
+            data_energy = np.sqrt(data.dot(data) / data.size)
+            data += noise_level * noise_dst * data_energy / noise_energy
+            return data
 
 
 class SpectrogramParser(AudioParser):
@@ -94,10 +137,11 @@ class SpectrogramParser(AudioParser):
         self.window = audio_conf.window.value
         self.normalize = normalize
         self.aug_conf = augmentation_conf
-        if augmentation_conf and augmentation_conf.noise_dir:
+        if augmentation_conf and augmentation_conf.noise_dir or augmentation_conf.perceptual_noise:
             self.noise_injector = NoiseInjection(path=augmentation_conf.noise_dir,
                                                  sample_rate=self.sample_rate,
-                                                 noise_levels=augmentation_conf.noise_levels)
+                                                 noise_levels=augmentation_conf.noise_levels,
+                                                 augmentation_conf=augmentation_conf)
         else:
             self.noise_injector = None
 
@@ -105,6 +149,7 @@ class SpectrogramParser(AudioParser):
         if self.aug_conf and self.aug_conf.speed_volume_perturb:
             y = load_randomly_augmented_audio(audio_path, self.sample_rate)
         else:
+        ############# add mel gan here ########### anirudh
             y = load_audio(audio_path)
         if self.noise_injector:
             add_noise = np.random.binomial(1, self.aug_conf.noise_prob)
@@ -128,7 +173,6 @@ class SpectrogramParser(AudioParser):
 
         if self.aug_conf and self.aug_conf.spec_augment:
             spect = spec_augment(spect)
-
         return spect
 
     def parse_transcript(self, transcript_path):
@@ -164,6 +208,7 @@ class SpectrogramDataset(Dataset, SpectrogramParser):
         sample = self.ids[index]
         audio_path, transcript_path = sample[0], sample[1]
         spect = self.parse_audio(audio_path)
+        torch.cuda.empty_cache()
         transcript = self.parse_transcript(transcript_path)
         return spect, transcript
 
